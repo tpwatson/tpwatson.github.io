@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XRPL Testing</title>
+    <script src="https://unpkg.com/xrpl@2.0.0/build/xrpl-latest-min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.15.1/dist/phaser-arcade-physics.min.js"></script>
+
+</head>
+<body>
+    <h1>Phaser + XRPL Testing</h1>
+    <p>After connecting, a new wallet will automatically be generated for testing purposes.</p>
+    <p id="readyMessage">Please wait a few seconds...</p>
+    <div id="walletsList">
+    </div>
+    <script>
+
+        let myWallet;
+        let test_wallet;
+        let sendCount = 0;
+        let walletBalance;
+        const generateWallet = async function() {
+            console.log("generating wallet, standby for result:")
+            const fund_result = await client.fundWallet()
+            test_wallet = fund_result.wallet
+            myWalletObject = test_wallet;
+            myWallet = test_wallet.address;
+            console.log(test_wallet);
+            if (fund_result.balance) {
+                
+                walletBalance = fund_result.balance;
+                updateWalletBalance()
+                document.getElementById('readyMessage').innerText = "Press SPACEBAR to test sending XRP. Open DevTools for details."
+                console.log(fund_result)
+
+
+            }
+        }
+        
+        const refreshBalance = async function() {
+            // Get info from the ledger about the address we just funded
+            const response = await client.request({
+            "command": "account_info",
+            "account": myWallet,
+            "ledger_index": "validated"
+        }).then(result => {
+            let resultBalance = result.result.account_data.Balance;
+            console.log("Look up result: ", result.result.account_data.Balance);
+            //updateXRPLMessaging(result.result.account_data)
+            // update game displayed balance
+            walletBalance = xrpl.dropsToXrp(result.result.account_data.Balance)
+            updateWalletBalance()
+
+            
+        })
+        }
+        let prepared;
+        const prepareTxn = async function() {
+            // Prepare transaction -------------------------------------------------------
+            prepared = await client.autofill({
+                "TransactionType": "Payment",
+                "Account": myWallet,
+                "Amount": xrpl.xrpToDrops("1"),
+                "Destination": "rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe"
+            }).then(result => {
+                console.log(result);
+                prepared = result;
+                console.log(prepared);
+                updateXRPLMessaging(prepared)
+                const max_ledger = prepared.LastLedgerSequence
+                console.log("Prepared transaction instructions:", prepared)
+                console.log("Transaction cost:", xrpl.dropsToXrp(prepared.Fee), "XRP")
+                console.log("Transaction expires after ledger:", max_ledger)
+                console.log("What is prepared: "+prepared);
+            // Sign prepared instructions ------------------------------------------------
+            signed = test_wallet.sign(prepared)
+            console.log("Identifying hash:", signed.hash)
+            updateXRPLMessaging("Prepared Tx: "+prepared +"\nID hash: "+ signed.hash + "\nSigned Blob: "+ signed.tx_blob)
+            console.log("Signed blob:", signed.tx_blob)
+            submitTxn();
+            })
+
+        }
+        let signed;
+        const signTxn = function() {
+            console.log("What is prepared: "+prepared);
+            // Sign prepared instructions ------------------------------------------------
+            signed = test_wallet.sign(prepared)
+            console.log("Identifying hash: ", signed.hash)
+            console.log("Signed blob:", signed.tx_blob)
+            submitTxn();
+        }
+        const submitTxn = async function () {
+            const tx = await client.submitAndWait(signed.tx_blob).then(result => {
+                console.log(result);
+                sendCount++
+                updateXRPLMessaging("Sent "+sendCount+" XRP + a total fee of " +result.result.Fee * sendCount + " drops.")
+                refreshBalance()
+                
+            })
+        }
+    </script>
+        <script>
+
+            var config = {
+                type: Phaser.AUTO,
+                width: 800,
+                height: 600,
+                physics: {
+                    default: 'arcade',
+                    arcade: {
+                        gravity: { y: 200 }
+                    }
+                },
+                scene: {
+                    preload: preload,
+                    create: create
+                }
+            };
+
+            // declare XRPL status
+            let client;
+            let xrplStatus;
+            let xrplWalletStatus;
+            let xrplXRPBalance = 0;
+            let sendXRPButton;
+            let xrplMessaging;
+
+
+            var game = new Phaser.Game(config);
+
+            function preload ()
+            {            
+                this.load.setBaseURL('http://labs.phaser.io');
+                this.load.image('sky', 'assets/skies/space3.png');
+                this.load.image('logo', 'assets/sprites/phaser3-logo.png');
+                this.load.image('red', 'assets/particles/red.png');
+
+                //this.load.image('background','assets/misc/starfield.jpg');
+            }
+        
+            function create ()
+            {
+                this.screenCenter = [config.width/2, config.height /2]
+                this.add.image(400, 300, 'sky');
+        
+                var particles = this.add.particles('red');
+        
+                var emitter = particles.createEmitter({
+                    speed: 100,
+                    scale: { start: 1, end: 0 },
+                    blendMode: 'ADD'
+                });
+        
+                var logo = this.physics.add.image(400, 100, 'logo');
+        
+                logo.setVelocity(100, 200);
+                logo.setBounce(1, 1);
+                logo.setCollideWorldBounds(true);
+        
+                emitter.startFollow(logo);
+
+                // XRPL STATUS TEXT
+                xrplStatus = this.add.text(2, 0, 'Connecting to XRPL...', { fontFamily: 'Georgia, "Goudy Bookletter 1911", Times, serif' });
+                xrplWalletStatus = this.add.text(2, 20, 'Wallet Address: Generating...', { fontFamily: 'Georgia, "Goudy Bookletter 1911", Times, serif' });
+                xrplXRPBalance = this.add.text(2, 40, 'XRP Balance: ', { fontFamily: 'Georgia, "Goudy Bookletter 1911", Times, serif' });
+                xrplMessaging = this.add.text(2, 545, '', { fontFamily: 'Georgia, "Goudy Bookletter 1911", Times, serif' });
+                
+
+                // XRPL SEND                
+                this.input.keyboard.on('keydown', function (event) {
+                if (event.keyCode === Phaser.Input.Keyboard.KeyCodes.SPACE)
+                    {
+                        prepareTxn();
+                    }
+                });
+            }
+
+            function update() {
+                if (client.connect()){
+                    xrplWalletStatus = xrplWalletStatus.setText('Wallet Address: Generating...')
+                    xrplXRPBalance.setText('XRP: N/A')
+                }
+            }
+            function updateWalletBalance() {
+                xrplWalletStatus.setText('Wallet Address: '+ myWallet, { fontFamily: 'Georgia, "Goudy Bookletter 1911", Times, serif' });
+                xrplXRPBalance.setText('XRP: '+walletBalance, { fontFamily: 'Georgia, "Goudy Bookletter 1911", Times, serif' });
+                
+            }
+            function updateXRPLMessaging(logData) {
+                xrplMessaging.setText(logData)
+
+            }
+
+                
+                // connect to public testnet
+                (async function () {
+                    client = new xrpl.Client("wss://s.altnet.rippletest.net:51233")
+                    await client.connect()
+
+                    if (client.connect()) {
+                        //document.getElementById('connectStatus').innerText = 'Connected'
+                        xrplStatus.setText('Connected to XRPL (wss://s.altnet.rippletest.net:51233)', { fontFamily: 'Georgia, "Goudy Bookletter 1911", Times, serif' });
+                        
+                        
+                    generateWallet();
+                    } else {
+                        console.log('not connected')
+                    }
+                })();
+
+            </script>
+
+</body>
+</html>
